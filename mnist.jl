@@ -1,108 +1,46 @@
-    const IMAGEOFFSET = 16
-    const LABELOFFSET = 8
+const MB_SIZE = sizeof(UInt32)
+const IMAGE_HDR_SIZE = MB_SIZE + sizeof(UInt32) * 3
+const LABEL_HDR_SIZE = MB_SIZE + sizeof(UInt32)
+const PIXEL_ROWS = 28
+const PIXEL_COLS = 28
+const IMAGE_SIZE = PIXEL_ROWS*PIXEL_COLS
 
-    const NROWS = 28
-    const NCOLS = 28
+function hdr(io, n)
+    a = Array{UInt32,1}(undef, n)
+    seek(io, 0)
+    read!(io, a)
+    ntoh.(Tuple(a))
+end
 
-    const TRAINIMAGES = joinpath(
-        dirname(@__FILE__), "train-images-idx3-ubyte"
-    )
-    const TRAINLABELS = joinpath(
-        dirname(@__FILE__), "train-labels-idx1-ubyte"
-    )
-    const TESTIMAGES = joinpath(
-        dirname(@__FILE__), "t10k-images-idx3-ubyte"
-    )
-    const TESTLABELS = joinpath(
-        dirname(@__FILE__), "t10k-labels-idx1-ubyte"
-    )
+function image(io, i)
+    img = Array{UInt8,1}(undef, IMAGE_SIZE)
+    seek(io, IMAGE_HDR_SIZE + IMAGE_SIZE * (i - 1))
+    n = readbytes!(io, img, IMAGE_SIZE)
+    @assert(n==IMAGE_SIZE, "image size mismatch")
+    reshape(img, (PIXEL_ROWS,PIXEL_COLS))
+end
 
-    function imageheader(filename::AbstractString)
-        io = open(filename, "r")
-        magic_number = bswap(read(io, UInt32))
-        total_items = bswap(read(io, UInt32))
-        nrows = bswap(read(io, UInt32))
-        ncols = bswap(read(io, UInt32))
-        close(io)
-        return (
-            magic_number,
-            Int(total_items),
-            Int(nrows),
-            Int(ncols)
-        )
+function label(io, i)
+    seek(io, LABEL_HDR_SIZE + (i - 1))
+    read(io, UInt8)
+end
+
+function data(imagefile, labelfile)
+    imgio = open(imagefile, "r")
+    labio = open(labelfile, "r")
+
+    mb1,count,rows,cols = hdr(imgio, 4)
+    mb2,count2 = hdr(labio, 2)
+    @assert(count==count2, "image and label count mismatch")
+    images = Array{Float32,3}(undef, rows, cols, count)
+    labels = Array{Float64,1}(undef, count)
+
+    for i in 1:count
+        images[:,:,i] = image(imgio, i)
+        labels[i] = label(labio, i)
     end
 
-    function labelheader(filename::AbstractString)
-        io = open(filename, "r")
-        magic_number = bswap(read(io, UInt32))
-        total_items = bswap(read(io, UInt32))
-        close(io)
-        return magic_number, Int(total_items)
-    end
-
-    function getimage(filename::AbstractString, index::Integer)
-        io = open(filename, "r")
-        seek(io, IMAGEOFFSET + NROWS * NCOLS * (index - 1))
-        #image_t = read(io, UInt8, (NROWS, NCOLS))
-
-        image_t = Array{UInt8,1}(undef, NROWS*NCOLS);
-        readbytes!(io, image_t);
-        close(io)
-        #return image_t'
-        return image_t
-    end
-
-    function getlabel(filename::AbstractString, index::Integer)
-        io = open(filename, "r")
-        seek(io, LABELOFFSET + (index - 1))
-        label = read(io, UInt8)
-        close(io)
-        return label
-    end
-
-    function trainimage(index::Integer)
-        convert(Array{Float64}, getimage(TRAINIMAGES, index))
-    end
-
-    function testimage(index::Integer)
-        convert(Array{Float64}, getimage(TESTIMAGES, index))
-    end
-
-    function trainlabel(index::Integer)
-        convert(Float64, getlabel(TRAINLABELS, index))
-    end
-
-    function testlabel(index::Integer)
-        convert(Float64, getlabel(TESTLABELS, index))
-    end
-
-    trainfeatures(index::Integer) = vec(trainimage(index))
-
-    testfeatures(index::Integer) = vec(testimage(index))
-
-    function traindata()
-        _, nimages, nrows, ncols = imageheader(TRAINIMAGES)
-        nimages = 3
-        #features = Array(Float64, nrows * ncols, nimages)
-        #labels = Array(Float64, nimages)
-        features = Array{Float64,2}(undef, nimages, nrows * ncols)
-        labels = Array{Float64,1}(undef, nimages)
-        for index in 1:nimages
-            features[index,:] = trainfeatures(index)
-            labels[index] = trainlabel(index)
-        end
-        return features, labels
-    end
-
-    function testdata()
-        _, nimages, nrows, ncols = imageheader(TESTIMAGES)
-        features = Array(Float64, nrows * ncols, nimages)
-        labels = Array(Float64, nimages)
-        for index in 1:nimages
-            features[:, index] = testfeatures(index)
-            labels[index] = testlabel(index)
-        end
-        return features, labels
-    end
-
-show(traindata())
+    close(imgio)
+    close(labio)
+    (images,labels)
+end
